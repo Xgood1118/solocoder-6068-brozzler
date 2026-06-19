@@ -1,0 +1,89 @@
+[project]
+name = "brozzler"
+version = "1.9.5"
+authors = [
+  { name="Noah Levitt", email="nlevitt@archive.org" },
+]
+maintainers = [
+  { name="Vangelis Banos", email="vangelis@archive.org" },
+  { name="Adam Miller", email="adam@archive.org" },
+  { name="Barbara Miller", email="barbara@archive.org" },
+  { name="Alex Dempsey", email="avdempsey@archive.org" },
+  { name="Misty De Méo", email="misty@archive.org" },
+]
+description = "Distributed web crawling with browsers"
+readme = "README.rst"
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: System :: Archiving",
+]
+dependencies = [
+  "PyYAML>=5.1",
+  "reppy==0.3.4",
+  "requests>=2.21",
+  "websocket-client==1.8.0",
+  "pillow>=5.2.0",
+  "urlcanon>=0.1.dev23",
+  "cerberus>=1.0.1",
+  "jinja2>=2.10",
+  "cryptography>=2.3",
+  "python-magic>=0.4.15",
+  "prometheus-client>=0.20.0",
+  "structlog>=25.1.0",
+]
+license = "Apache-2.0"
+
+[project.optional-dependencies]
+yt-dlp = ["yt-dlp[default,curl-cffi]>=2024.7.25"]
+dashboard = ["flask>=1.0", "gunicorn>=19.8.1"]
+warcprox = ["warcprox>=2.4.31"]
+rethinkdb = [
+  "rethinkdb==2.4.9",
+  "doublethink==0.4.9",
+  # Needed because of rethinkdb 2.4.9;
+  # can be removed when we can upgrade to 2.4.10.post1
+  "setuptools>=80.0.0;python_version>='3.12'",
+]
+
+[project.scripts]
+brozzle-page = "brozzler.cli:brozzle_page"
+brozzler-new-job = "brozzler.cli:brozzler_new_job"
+brozzler-new-site = "brozzler.cli:brozzler_new_site"
+brozzler-worker = "brozzler.cli:brozzler_worker"
+brozzler-ensure-tables = "brozzler.cli:brozzler_ensure_tables"
+brozzler-list-captures = "brozzler.cli:brozzler_list_captures"
+brozzler-list-jobs = "brozzler.cli:brozzler_list_jobs"
+brozzler-list-sites = "brozzler.cli:brozzler_list_sites"
+brozzler-list-pages = "brozzler.cli:brozzler_list_pages"
+brozzler-stop-crawl = "brozzler.cli:brozzler_stop_crawl"
+brozzler-purge = "brozzler.cli:brozzler_purge"
+brozzler-dashboard = "brozzler.dashboard:main"
+brozzler-easy = "brozzler.easy:main"
+brozzler-wayback = "brozzler.pywb:main"
+
+[project.urls]
+Homepage = "https://github.com/internetarchive/brozzler"
+Issues = "https://github.com/internetarchive/brozzler/issues"
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.5",
+  "ruff>=0.9.9"
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+  # Comes from reppy, a third-party deps we don't control
+  "ignore: is an invalid escape sequence. Such sequences will not work in the future",
+  # Also comes from reppy
+  "ignore: The 'warn' method is deprecated, use 'warning' instead",
+]

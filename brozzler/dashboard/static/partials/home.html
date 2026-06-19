@@ -1,0 +1,93 @@
+<ol class="breadcrumb">
+    <li class="active">Home</li>
+</ol>
+
+<div class="page-header">
+    <h1>Brozzler
+        <a href="/"><img src="/static/brozzler.svg" style="height:1.5em;float:right"></a>
+    </h1>
+</div>
+
+<div>
+    <h2>Services</h2>
+
+    <p><a href="/workers">Brozzler Workers</a></p>
+
+    <div class="row">
+        <div class="col-sm-12">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>role</th>
+                        <th>host</th>
+                        <th>pid</th>
+                        <th>load</th>
+                        <th>first heartbeat</th>
+                        <th>last heartbeat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <tr ng-repeat="service in services">
+                    <td>{{service.role}}</td>
+                    <td>{{service.host}}</td>
+                    <td>{{service.pid}}</td>
+                    <td>{{service.load}}</td>
+                    <td>{{service.first_heartbeat}}</td>
+                    <td>{{service.last_heartbeat}}</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <h2>Jobs</h2>
+    <div class="row">
+        <div class="col-sm-12">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>id</th>
+                        <th>status</th>
+                        <th>started</th>
+                        <th>finished</th>
+                        <th># of seeds</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <tr ng-repeat="job in jobs">
+                    <td><a href="/jobs/{{job.id}}">{{job.id}}</a></td>
+                    <td>{{job.status}}</td>
+                    <td>{{job.started}}</td>
+                    <td>{{job.finished}}</td>
+                    <td>{{job.conf.seeds.length}}</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <h2>Jobless Sites</h2>
+    <div class="row">
+        <div class="col-sm-12">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>id</th>
+                        <th>status</th>
+                        <th>started</th>
+                        <th>seed url</th>
+                    </tr>
+                </thead>
+                <tbody>
+                  <tr ng-repeat="site in joblessSites">
+                      <td><a href="/sites/{{site.id}}">{{site.id}}</a></td>
+                      <td>{{site.status}}</td>
+                      <td>{{site.start_time}}</td>
+                      <td>{{site.seed}}</td>
+                  </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>

@@ -1,0 +1,7 @@
+---
+- name: restart warcprox
+  svc:
+    name: warcprox
+    state: restarted
+    service_dir: /etc/service
+  become: true

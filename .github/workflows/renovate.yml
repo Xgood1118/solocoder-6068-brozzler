@@ -1,0 +1,46 @@
+name: Renovate
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.user.login == 'renovate[bot]' && github.repository == 'internetarchive/brozzler' && startsWith(github.event.pull_request.head.ref, 'renovate/yt-dlp-')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install chromium-browser
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Test new yt-dlp
+        run: |
+          set -euo pipefail
+
+          uv sync --extra yt-dlp --extra rethinkdb --extra warcprox --python 3.12
+
+          # Warcprox has to be running to get video capture results
+          .venv/bin/warcprox &
+          warcprox_pid=$!
+
+          uv run scripts/ytdlp_test.py
+
+          kill $warcprox_pid
+      - name: Auto-approve PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Merge PR
+        run: gh pr merge --rebase "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

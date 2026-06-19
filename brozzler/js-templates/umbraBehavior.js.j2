@@ -1,0 +1,247 @@
+/*
+ * brozzler/js-templates/umbrabehavior.js.j2 - an umbra/brozzler behavior class
+ *
+ * Copyright (C) 2017-2019 Internet Archive
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+class UmbraBehavior {
+
+    constructor(actions) {
+        this.IDLE_TIMEOUT_SEC = 10;
+        this.actions = actions;
+        this.alreadyDone = [];
+        this.idleSince = null;
+        this.intervalId = null;
+        this.intervalTimeMs = {{interval or 300}};
+        this.index = 0;
+        this.outlinks = [];
+    }
+
+    simpleIntervalFunc() {
+        // should match older default and simpleclicks behavior, and more
+        var k = this.index;
+        var selector = this.actions[k].selector;
+        var childSelector = this.actions[k].childSelector;
+        var repeatSameElement = this.actions[k].repeatSameElement ? this.actions[k].repeatSameElement : false;
+        var repeatUntilSelector = this.actions[k].repeatUntilSelector ? this.actions[k].repeatUntilSelector : null;
+        var limit = this.actions[k].limit ? this.actions[k].limit : false;
+        var action = this.actions[k].do ? this.actions[k].do : 'click';
+        var rmSelector = this.actions[k].rmSelector ? this.actions[k].rmSelector : null;
+        var closeSelector = this.actions[k].closeSelector ? this.actions[k].closeSelector : null;
+        var didSomething = false;
+        var somethingLeftAbove = false;
+        var somethingLeftBelow = false;
+        var extractOutlinks = this.actions[k].extractOutlinks ? this.actions[k].extractOutlinks : false;
+        var extractOutlinksInLoop = this.actions[k].extractOutlinksInLoop ? this.actions[k].extractOutlinksInLoop : false;
+
+        var documents = [];
+        documents[0] = document;
+
+        var iframes = document.querySelectorAll("iframe");
+        var iframesLength = iframes.length;
+        for (var i = 0; i < iframesLength; i++) {
+            try {
+                documents.push(iframes[i].contentWindow.document);
+            } catch (e) {
+                // it'd be too much logging because this is common:
+                // SecurityError: Blocked a frame with origin "..." from accessing a cross-origin frame
+                // console.log("exception looking at iframe" + iframes[i] + ": " + e);
+            }
+        }
+
+        var documentsLength = documents.length;
+        for (var j = 0; j < documentsLength; j++) {
+            if (rmSelector) {
+                var rmTargets = documents[j].querySelectorAll(rmSelector);
+                for (var i = 0; i < rmTargets.length; i++) {
+                    if (this.isVisible(rmTargets[i])) {
+                        rmTargets[i].remove();
+                        didSomething = true;
+                        break;
+                    }
+                }
+            }
+            if (closeSelector) {
+                var closeTargets = documents[j].querySelectorAll(closeSelector);
+                for (var i = 0; i < closeTargets.length; i++) {
+                    if (this.isVisible(closeTargets[i])) {
+                        closeTargets[i].click();
+                        didSomething = true;
+                        break;
+                    }
+                }
+            }
+
+            var doTargets = documents[j].querySelectorAll(selector);
+
+            var repeats = doTargets.length;
+            if (limit && limit < repeats) {
+                repeats = limit;
+            }
+
+            if (!(repeats > 0)) {
+                continue;
+            }
+
+            for ( var i = 0; i < repeats; i++) {
+                if (this.alreadyDone.indexOf(doTargets[i]) > -1) {
+                    if (!repeatSameElement) {
+                        continue;
+                    }
+
+                    // We were looping the same element but we're done now
+                    if (repeatSameElement && repeatUntilSelector && document.querySelector(repeatUntilSelector) != null) {
+                        break;
+                    }
+                }
+                if (!this.isVisible(doTargets[i])) {
+                    continue;
+                }
+                var where = this.aboveBelowOrOnScreen(doTargets[i]);
+                if (where == 0) {
+                    this.doTarget(doTargets[i], action);
+                    if (childSelector) {
+                        var childSelectors = documents[j].querySelectorAll(childSelector);
+                        while (childSelectors.length > 0) {
+                            for (var i = 0; i < childSelectors.length; i++) {
+                                if (this.isVisible(childSelectors[i])) {
+                                    childSelectors[i].click();
+                                }
+                            }
+                            childSelectors = documents[j].querySelectorAll(childSelector);
+                        }
+                    }
+                    // If we were asked to extract outlinks within the loop,
+                    // repeat this every time we iterate
+                    if (extractOutlinks && extractOutlinksInLoop) {
+                        this.outlinks = this.outlinks.concat(__brzl_compileOutlinks(window));
+                    }
+
+                    didSomething = true;
+                    break;
+                } else if (where > 0) {
+                    somethingLeftBelow = true;
+                } else if (where < 0) {
+                    somethingLeftAbove = true;
+                }
+            }
+
+            if (limit && limit == i) {
+                this.nextAction();
+                break;
+            }
+        }
+
+        // If we were asked not to extract outlinks within the loop,
+        // do this once after we've finished looping
+        if (extractOutlinks && !extractOutlinksInLoop) {
+            this.outlinks = this.outlinks.concat(__brzl_compileOutlinks(window));
+        }
+
+        if (!didSomething) {
+            if (somethingLeftBelow || ( (window.scrollY + window.innerHeight) < document.documentElement.scrollHeight)) {
+                window.scrollBy(0, 200);
+                this.idleSince = null;
+            } else if (somethingLeftAbove) {
+                window.scrollBy(0, -500);
+                this.idleSince = null;
+            } else if (this.idleSince == null) {
+                this.idleSince = Date.now();
+            }
+        }
+
+        if (!this.idleSince) {
+            this.idleSince = Date.now();
+        } else {
+            var idleTimeMs = Date.now() - this.idleSince;
+            if ((idleTimeMs / 1000) > (this.IDLE_TIMEOUT_SEC - 1) && (this.index < (this.actions.length - 1))) {
+                this.nextAction();
+            }
+        }
+    }
+
+    aboveBelowOrOnScreen(elem) {
+        var eTop = elem.getBoundingClientRect().top;
+        if (eTop < window.scrollY) {
+            return -1; // above
+        } else if (eTop > window.scrollY + window.innerHeight) {
+            return 1; // below
+        } else {
+            return 0; // on screen
+        }
+    }
+
+    isVisible(elem) {
+        return elem && !!(elem.offsetWidth || elem.offsetHeight || elem.getClientRects().length);
+    }
+
+    doTarget(target, action) {
+        // console.log("doing " + action + target.outerHTML);
+        // do mouse over event on target
+        // since some urls are requested only on
+        // this event - see
+        // https://webarchive.jira.com/browse/AITFIVE-451
+        var mouseOverEvent = document.createEvent("Events");
+        mouseOverEvent.initEvent("mouseover", true, false);
+        target.dispatchEvent(mouseOverEvent);
+
+        if (action == "click") {
+            target.click();
+        } // add new do's here!
+
+        this.alreadyDone.push(target);
+        this.idleSince = null;
+    }
+
+    nextAction() {
+        console.log("ready for next action");
+        this.index += 1;
+        this.idleSince = null;
+        window.scroll(0,0);
+    }
+
+    start() {
+        var that = this;
+        this.intervalId = setInterval(function() {
+            that.simpleIntervalFunc()
+        }, this.intervalTimeMs);
+    }
+
+    isFinished() {
+        if (this.idleSince != null) {
+            var idleTimeMs = Date.now() - this.idleSince;
+            if (idleTimeMs / 1000 > this.IDLE_TIMEOUT_SEC) {
+                clearInterval(this.intervalId);
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+var umbraBehavior = new UmbraBehavior( {{actions|json}} );
+
+// Called from outside of this script.
+var umbraBehaviorFinished = function() {
+    let outlinkStrings = umbraBehavior.outlinks.map(el => el.toString());
+
+    return {
+        finished: umbraBehavior.isFinished(),
+        outlinks: Array.from(outlinkStrings),
+    };
+};
+
+umbraBehavior.start();

@@ -1,0 +1,98 @@
+var __brzl_tryLoginState = 'trying';
+
+var __brzl_tryLogin = function() {
+    var login_open = document.querySelectorAll("[class^='login-open']");
+    for(var x = 0; x < login_open.length; x++){
+        button = login_open[x];
+        button.click();
+    }
+
+    for (var i = 0; i < document.forms.length; i++) {
+        var form = document.forms[i];
+        if (form.method != 'post') {
+            continue;
+        }
+        var usernameField = undefined;
+        var passwordField = undefined;
+        for (var j = 0; j < form.elements.length; j++) {
+            var field = form.elements[j];
+            if (field.type == 'text' || field.type == 'email') {
+                if (!usernameField) {
+                    usernameField = field;
+                } else {
+                    usernameField = undefined;
+                    break;
+                }
+            } else if (field.type == 'password') {
+                if (!passwordField) {
+                    passwordField = field;
+                } else {
+                    passwordField = undefined;
+                    break;
+                }
+            } else if (field.type == 'textarea') {
+                usernameField = undefined;
+                passwordField = undefined;
+                break;
+            }
+        }
+        if (usernameField && passwordField) {
+            usernameField.value = {{username|json}};
+            passwordField.value = {{password|json}};
+            // Trigger input and change events for username and password fields
+            for (const field of [usernameField, passwordField]) {
+              field.dispatchEvent(new Event("input",  { bubbles: true }));
+              field.dispatchEvent(new Event("change", { bubbles: true }));
+              field.blur();
+            }
+            console.log('submitting username=' + usernameField.value
+                        + ' password=*** to detected login form');
+            try {
+                form.requestSubmit();
+            } catch (e) {
+                // "If a form control (such as a submit button) has a name or
+                // id of 'submit' it will mask the form's submit method." -MDN
+                // http://stackoverflow.com/a/2000021
+                var pseudoForm = document.createElement('form');
+                pseudoForm.submit.apply(form);
+            }
+            __brzl_tryLoginState = 'submitted-form';
+            return;
+        }
+    }
+
+    if(__brzl_tryLoginState === 'trying'){
+        var submit = undefined;
+        var usernameInput = undefined;
+        var passwordField = undefined;
+        var login = document.querySelectorAll("[class^='login']");
+
+        for (var z = 0; z < login.length; z++){
+            var input = login[z];
+
+            if (input.type === "text" || input.type == "email") {
+                usernameField = input;
+            } else if (input.type === "password") {
+                passwordField = input;
+            }  else if(input.onclick != null) {
+                submit = input; 
+            } else if (input.type == "textarea") {
+                usernameField = undefined;
+                passwordField = undefined;
+                break;
+            }
+        }
+
+        if (submit && usernameField && passwordField){
+            usernameField.value = {{username|json}};
+            passwordField.value = {{password|json}};
+            submit.click();
+            __brzl_tryLoginState = 'maybe-submitted-form';
+            return;
+        }
+    }
+
+    __brzl_tryLoginState = 'login-form-not-found';
+};
+
+__brzl_tryLogin();

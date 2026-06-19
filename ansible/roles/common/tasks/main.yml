@@ -1,0 +1,76 @@
+---
+- apt:
+    name:
+    - python3-setuptools
+    - python3-pip
+    - python3-virtualenv
+    - daemontools
+    - daemontools-run
+    state: present
+    update_cache: yes
+    cache_valid_time: 86400 # one day
+  become: true
+
+# # get recent virtualenv, which bundles a recent pip
+# - find:
+#     paths:
+#     - /usr/local/lib/python3.4/dist-packages
+#     - /usr/local/lib/python3.5/dist-packages
+#     recurse: true
+#     patterns: virtualenv.py
+#     contains: '__version__ = "16.4.3"'
+#   register: virtualenv_py_16_4_3
+# 
+# - command: mktemp -d
+#   register: mktempd_out
+#   when: virtualenv_py_16_4_3.matched == 0
+# 
+# - name: download virtualenv-16.4.3
+#   get_url:
+#     url: https://files.pythonhosted.org/packages/37/db/89d6b043b22052109da35416abc3c397655e4bd3cff031446ba02b9654fa/virtualenv-16.4.3.tar.gz
+#     dest: '{{mktempd_out.stdout}}'
+#     checksum: sha256:984d7e607b0a5d1329425dd8845bd971b957424b5ba664729fab51ab8c11bc39
+#   when: virtualenv_py_16_4_3.matched == 0
+# 
+# - name: extract virtualenv-16.4.3.tar.gz
+#   unarchive:
+#     src: '{{mktempd_out.stdout}}/virtualenv-16.4.3.tar.gz'
+#     dest: '{{mktempd_out.stdout}}'
+#     copy: no
+#   when: virtualenv_py_16_4_3.matched == 0
+# 
+# - name: run "python3 setup.py install" in {{mktempd_out.stdout}}/virtualenv-16.4.3
+#   become: true
+#   command: python3 setup.py install
+#   args:
+#     chdir: '{{mktempd_out.stdout}}/virtualenv-16.4.3'
+#   when: virtualenv_py_16_4_3.matched == 0
+# 
+# - file:
+#     path: '{{mktempd_out.stdout}}'
+#     state: absent
+#   become: true
+#   when: virtualenv_py_16_4_3.matched == 0
+
+# this clause is a workaround for travis-ci, which only wants to install in /usr
+# see https://travis-ci.org/internetarchive/brozzler/builds/174338601
+# but it complains that /usr/lib/python3.5/site-packages doesn't exist
+# see https://travis-ci.org/internetarchive/brozzler/builds/174094831
+- file:
+    path: '{{item}}'
+    state: directory
+  with_items:
+  - /usr/lib/python3.5/site-packages
+  - /usr/lib/python3.5/dist-packages
+  become: true
+
+- command: id {{user}}
+  register: id_user
+  ignore_errors: true
+  changed_when: false
+
+- name: ensure service user {{user}} exists
+  user: name={{user}} system=yes createhome=no home=/nonexistent
+        shell=/usr/sbin/nologin
+  become: true
+  when: id_user|failed

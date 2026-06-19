@@ -1,0 +1,277 @@
+#
+# brozzler/behaviors.yaml - behavior configuration
+#
+# Copyright (C) 2014-2024 Internet Archive
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# first matched behavior is used, so order matters here
+-
+  url_regex: '^https?://(?:www\.)?facebook\.com/ads/library/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  request_idle_timeout_sec: 30
+  default_parameters:
+    interval: 1000
+    actions:
+      - selector: a[data-testid="snapshot_footer_link"]
+        childSelector: i[class="_271o img sp_KBE8sh--02o sx_5d0205"]
+        closeSelector: 'div._7lq1 > button'
+-
+  url_regex: '^https?://(?:www\.)?facebook\.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  request_idle_timeout_sec: 30
+  default_parameters:
+    actions:
+      - selector: a[rel="theater"], a[id="expanding_cta_close_button"]
+        closeSelector: 'a._xlt'
+-
+  url_regex: '^https?://(?:www\.)?instagram\.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    interval: 500
+    actions:
+      - selector: ._7UhW9, .glyphsSpriteGrey_Close
+        rmSelector: '.RnEpo'
+      - selector: 'a>.eLAPa>.KL4Bh'
+        limit: 1
+        rmSelector: '.RnEpo'
+      - selector: a.coreSpriteRightPaginationArrow
+        repeatSameElement: true
+        rmSelector: '.RnEpo'
+-
+  url_regex: '^https?://www.opengov\.nsw\.gov\.au/publications.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  request_idle_timeout_sec: 10
+  default_parameters:
+    interval: 1000
+    actions:
+      - selector: span.DV-trigger.DV-next
+        repeatSameElement: true
+-
+  url_regex: '^https?://americaspresidents\.si\.edu/gallery.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    interval: 2500
+    actions:
+      - selector: div.see-more
+        limit: 1
+      - selector: li.next
+        repeatSameElement: true
+-
+  url_regex: '^https?://(?:www\.)?marquette\.edu/.*$'
+  behavior_js_template: marquette_edu.js
+  request_idle_timeout_sec: 10
+-
+  url_regex: '^https?://(?:www\.)?psu24.psu.edu/.*$'
+  behavior_js_template: psu24.js
+  request_idle_timeout_sec: 10
+-
+  url_regex: '^https?://(?:.*\.)?icaew\.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    interval: 500
+    actions:
+      - selector: a#CybotCookiebotDialogBodyButtonAccept
+      - selector: .more-link a.cta-link
+        repeatSameElement: true
+-
+  url_regex: '^https?://(?:www\.)?pm\.gc\.ca/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: div.teaser, li.pager__item a
+- # https://webarchive.jira.com/browse/ARI-5389
+  url_regex: '^https?://pitchfork\.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: div.teaser, li.pager__item a
+        closeSelector: .pmf-artist-modal__close-btn
+-
+  url_regex: '^https?://(?:www\.)?huffingtonpost\.com/.*$'
+  behavior_js_template: huffpostslides.js
+  request_idle_timeout_sec: 10
+-
+  url_regex: '^https?://(?:www\.)?brooklynmuseum\.org/exhibitions/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: img.img-responsive
+- # https://webarchive.jira.com/browse/ARI-5517
+  url_regex: '^https?://(?:www\.)?thejewishnews.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: a#get_more
+- # acalog https://webarchive.jira.com/browse/ARI-3775
+  url_regex: '^https?://.*[?&]catoid=[^?]*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: a[onclick]
+- # https://webarchive.jira.com/browse/ARI-5294
+  url_regex: '^https?://citymedfordwi\.civicweb\.net/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: div.meeting-document-type-buttons button.button-small
+- # https://webarchive.jira.com/browse/ARI-5409
+  url_regex: '^https?://(?:www\.)?tuebingen.de/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: a.kl
+- # https://webarchive.jira.com/browse/ARI-3956
+  url_regex: '^https?://(?:www\.)?usask.ca/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: a[id='feature-next']
+- # https://webarchive.jira.com/browse/AITFIVE-451
+  url_regex: '^https?://(?:www\.)?soundcloud.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: button.sc-button-play, .playButton, div.compactTrackListItem
+- # https://webarchive.jira.com/browse/AITFIVE-463
+  url_regex: '^https?://(?:www\.)?christophercerrone.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: button.playButton.medium
+- # https://webarchive.jira.com/browse/ARI-4690
+  url_regex: '^https?://(?:www\.)?youtube.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: span.load-more-text
+- # https://webarchive.jira.com/browse/ARI-5453
+  url_regex: '^https?://.*\.wixsite.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: .ddm1repeaterButtonlabel
+- # https://webarchive.jira.com/browse/ARI-4725
+  url_regex: '^https?://(?:www\.)?moma.org/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    interval: 300
+    actions:
+      - selector: 'div.link\/focus'
+        limit: 1
+      - selector: 'button.link\/focus'
+        repeatSameElement: true
+- # https://webarchive.jira.com/browse/ARI-4692
+  url_regex: '^https?://(?:www\.)?fec.gov/data/.*$'
+  behavior_js_template: fec_gov.js
+  request_idle_timeout_sec: 10
+- url_regex: '^https?://(?:www\.)?news\.com\.au/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: .menu-item a
+        do: mouseover
+- # https://webarchive.jira.com/browse/ARI-5259
+  url_regex: '^https?://blog\.sina\.com\.cn/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: li.SG_pgnext a
+- # https://webarchive.jira.com/browse/ARI-5313
+  url_regex: '^https?://.*\.ky\.gov/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: .zz1_AgencyListingMenu_1
+        do: mouseover
+- # https://webarchive.jira.com/browse/ARI-5384
+  url_regex: '^https?://issuu\.com/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: button#ird3-button-next
+- # https://webarchive.jira.com/browse/ARI-5241
+  url_regex: '^https?://(?:www\.)?colonialart\.org/.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: img.link-overlay
+- # https://webarchive.jira.com/browse/ARI-4960
+  url_regex: '^https?://(?:www\.)?fortstjames.ca/community-events-calendar/$'
+  behavior_js_template: umbraBehavior.js.j2
+  default_parameters:
+    actions:
+      - selector: img#navForward1
+- # https://webarchive.jira.com/browse/WT-3779
+  url_regex: '^https?://libraries.mit.edu/news/$'
+  behavior_js_template: umbraBehavior.js.j2
+  request_idle_timeout_sec: 10
+  default_parameters:
+    actions:
+      - selector: '#another'
+        repeatSameElement: true
+        repeatUntilSelector: '#another:has(style)'
+        limit: 1000
+- # https://webarchive.jira.com/browse/WT-3724
+  url_regex: '^https?://news.stanford.edu/press-center/?$'
+  default_parameters:
+    interval: 10
+    actions:
+      - selector: button[aria-label='Next page']
+        repeatSameElement: true
+        repeatUntilSelector: button[aria-label='Next page'][disabled]
+        extractOutlinks: true
+        extractOutlinksInLoop: true
+        limit: 1000
+- # https://webarchive.jira.com/browse/WT-3724
+  url_regex: '^https?://www.jacksonjc.com/obits/?$'
+  default_parameters:
+    interval: 10
+    actions:
+      - selector: .pagination > .next
+        repeatSameElement: true
+        repeatUntilSelector: .pagination > .next.disabled
+        extractOutlinks: true
+        extractOutlinksInLoop: true
+        limit: 1000
+- # https://webarchive.jira.com/browse/WT-3724
+  url_regex: '^https?://www.watsonmortuaryservice.com/obits/?$'
+  default_parameters:
+    interval: 10
+    actions:
+      - selector: '#next-page'
+        repeatSameElement: true
+        repeatUntilSelector: '#next-page.nav-disabled'
+        extractOutlinks: true
+        extractOutlinksInLoop: true
+        limit: 1000
+- # https://webarchive.jira.com/browse/WT-3724
+  url_regex: '^https?://aquatic-chemistry.ethz.ch/publications-and-awards/.+$'
+  default_parameters:
+    interval: 10
+    actions:
+      - selector: .EthPagination__button--next
+        repeatSameElement: true
+        repeatUntilSelector: .EthPagination__button--next[disabled]
+        extractOutlinks: true
+        extractOutlinksInLoop: true
+        limit: 1000
+- # default fallback behavior
+  url_regex: '^.*$'
+  behavior_js_template: umbraBehavior.js.j2
+  request_idle_timeout_sec: 10
+  default_parameters:
+    interval: 10
+    actions:
+      - selector: button#didomi-notice-agree-button, button.sc-button-play, .playButton, div.soundItem, .jwlist>a, audio, video

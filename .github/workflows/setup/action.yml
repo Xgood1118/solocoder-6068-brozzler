@@ -1,0 +1,39 @@
+name: Test setup
+
+inputs:
+  python-version:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install apt dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install libjpeg-dev chromium-browser
+      shell: bash
+
+    - name: Set up rethinkdb
+      run: |
+        # We don't need manpages in CI, and they take a significant amount
+        # of time to generate
+        echo "set man-db/auto-update false" | sudo debconf-communicate
+        sudo dpkg-reconfigure man-db
+
+        wget -qO- https://download.rethinkdb.com/repository/raw/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/rethinkdb-archive-keyrings.gpg
+        echo "deb [signed-by=/usr/share/keyrings/rethinkdb-archive-keyrings.gpg] https://download.rethinkdb.com/repository/ubuntu-$(lsb_release -cs) $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/rethinkdb.list
+        sudo apt-get update
+        sudo apt-get install rethinkdb
+        sudo cp /etc/rethinkdb/default.conf.sample /etc/rethinkdb/instances.d/instance1.conf
+        sudo /etc/init.d/rethinkdb restart
+      shell: bash
+
+    - name: Install Deno
+      uses: denoland/setup-deno@v2
+      with:
+        deno-version: v2.x
+
+    - name: Install pip dependencies
+      run: |
+        uv sync --python ${{ inputs.python-version }} --extra rethinkdb --extra warcprox --extra yt-dlp
+      shell: bash

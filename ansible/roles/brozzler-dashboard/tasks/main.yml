@@ -1,0 +1,33 @@
+---
+- name: mkdir {{venv_root}}/brozzler-dashboard-ve3
+  file: path={{venv_root}}/brozzler-dashboard-ve3 state=directory
+        owner={{user}}
+  become: true
+
+- name: install brozzler[dashboard] in virtualenv
+  pip:
+    name: '{{brozzler_pip_name}}[dashboard]'
+    virtualenv: '{{venv_root}}/brozzler-dashboard-ve3'
+    virtualenv_python: python3
+    virtualenv_command: python3 /usr/lib/python3/dist-packages/virtualenv.py
+    extra_args: '--no-input --upgrade --pre --cache-dir=/tmp/pip-cache'
+  become: true
+  become_user: '{{user}}'
+  notify:
+  - restart brozzler-dashboard
+
+- name: mkdir /etc/service/brozzler-dashboard
+  file:
+    path: /etc/service/brozzler-dashboard
+    state: directory
+  become: true
+
+- name: install /etc/service/brozzler-dashboard/run
+  template:
+    src: templates/brozzler-dashboard-run.j2
+    dest: /etc/service/brozzler-dashboard/run
+    mode: 0755
+  notify:
+  - restart brozzler-dashboard
+  become: true
+

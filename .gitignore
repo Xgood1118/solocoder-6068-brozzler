@@ -1,0 +1,115 @@
+# ── OS / Editor ──
+.DS_Store
+Thumbs.db
+*.log
+*.log.*
+*.swp
+.idea/
+.vscode/
+*.iml
+
+# ── Tool state (not source) ──
+.claude/
+.sisyphus/
+.trae/
+.angular/
+
+# ── Env / Secrets ──
+.env
+.env.local
+*.pem
+*.key
+
+# ── Node / Frontend ──
+node_modules/
+dist/
+build/
+.next/
+.cache/
+.parcel-cache/
+coverage/
+*.tsbuildinfo
+.npm/
+.yarn/
+
+# ── Portable Node.js bundles (project-shipped runtime) ──
+**/node/node.exe
+**/node/node_modules/
+**/node/npm
+**/node/npm.cmd
+**/node/npx
+**/node/npx.cmd
+**/node/corepack/
+**/node/install_tools.bat
+
+# ── Java / Maven / Gradle ──
+target/
+.gradle/
+*.class
+hs_err_pid*.log
+
+# ── Rust / Cargo ──
+**/*.rs.bk
+
+# ── Go ──
+vendor/
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.bak
+venv/
+.venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Database files (eval state) ──
+**/data/*.json
+
+# ── IDE build artifacts (classpath dumps, etc.) ──
+**/cp*.txt
+**/.classpath
+**/.project
+
+# ── User-uploaded / AI runtime state ──
+**/data/uploads/
+**/data/thumbnails/
+**/data/faiss/
+**/data/*.faiss
+**/data/*.pkl
+**/data/*.bin
+**/data/*.npy
+
+# ── SoloCoder evaluation data (NOT source) ──
+PROMPT.txt
+SPEC.md
+NEXT_PROMPT_*.txt
+NEXT_PROMPT_R*.md
+expected-output/
+solo-check-*-report.md
+screenshot_R*
+
+# ── SoloCoder runtime artifacts ──
+todo.db
+trae-*.log
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
