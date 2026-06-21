@@ -39,6 +39,22 @@
                 <span class="fa fa-ellipsis-h"></span> <strong>{{site.queued_count}}</strong> pages queued
             </div>
         </div>
+        <div class="col-sm-6 col-md-3" ng-if="pendingCount">
+            <div class="stat">
+                <span class="fa fa-clock-o"></span> <strong>{{pendingCount}}</strong> pending (rate-limited)
+            </div>
+        </div>
+    </div>
+
+    <div class="row" ng-if="site.claimed_since">
+        <div class="col-sm-12">
+            <div class="well well-sm">
+                <span class="fa fa-user"></span>
+                Claimed by: <strong>{{site.last_claimed_by || 'unknown'}}</strong>
+                <span ng-if="site.claimed_since">· since {{site.claimed_since}}</span>
+                <span ng-if="site.last_heartbeat">· last heartbeat: {{site.last_heartbeat}}</span>
+            </div>
+        </div>
     </div>
 
     <div class="row">

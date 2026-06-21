@@ -420,6 +420,8 @@ if importlib.util.find_spec("doublethink"):
     # to do if doublethink is unavailable.
     from brozzler.frontier import RethinkDbFrontier  # noqa: F401
     from brozzler.model import (
+        BehaviorExecution,  # noqa: F401
+        DisabledBehavior,  # noqa: F401
         InvalidJobConf,  # noqa: F401
         Job,  # noqa: F401
         Page,  # noqa: F401
@@ -441,6 +443,8 @@ if importlib.util.find_spec("doublethink"):
             "Job",
             "new_job_file",
             "InvalidJobConf",
+            "BehaviorExecution",
+            "DisabledBehavior",
         ]
     )
 

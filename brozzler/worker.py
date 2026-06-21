@@ -22,6 +22,8 @@ import datetime
 import importlib.util
 import io
 import json
+import os
+import re
 import socket
 import threading
 import time
@@ -125,6 +127,7 @@ class BrozzlerWorker:
         registry_url=None,
         env=None,
         worker_id=None,
+        worker_heartbeat_interval=30.0,
     ):
         self._frontier = frontier
         self._service_registry = service_registry
@@ -163,6 +166,8 @@ class BrozzlerWorker:
         self._metrics_port = metrics_port
         self._registry_url = registry_url
         self._env = env
+        self._worker_id = worker_id or ("%s-%d" % (socket.gethostname(), os.getpid()))
+        self._worker_heartbeat_interval = worker_heartbeat_interval
 
         self._browser_pool = brozzler.browser.BrowserPool(
             max_browsers, chrome_exe=chrome_exe, ignore_cert_errors=True
@@ -621,24 +626,36 @@ class BrozzlerWorker:
             self.logger.warning("Failed to fetch url", url=url, exc_info=True)
             raise brozzler.PageConnectionError() from e
 
+    def _match_behavior_regex(self, url):
+        for behavior in brozzler.behaviors():
+            if re.match(behavior["url_regex"], url):
+                return behavior["url_regex"]
+        return None
+
     def brozzle_site(self, browser, site):
         site_logger = self.logger.bind(site=site)
         try:
-            site.last_claimed_by = "%s:%s" % (socket.gethostname(), browser.chrome.port)
+            worker_identity = "%s:%s" % (socket.gethostname(), browser.chrome.port)
+            site.last_claimed_by = worker_identity
             site.save()
             start = time.time()
+            last_site_heartbeat = time.time()
             page = None
             self._frontier.enforce_time_limit(site)
             self._frontier.honor_stop_request(site)
-            # _proxy_for() call in log statement can raise brozzler.ProxyError
-            # which is why we honor time limit and stop request first☝🏻
             site_logger.info("brozzling site", proxy=self._proxy_for(site))
             while time.time() - start < self.SITE_SESSION_MINUTES * 60:
                 site.refresh()
                 self._frontier.enforce_time_limit(site)
                 self._frontier.honor_stop_request(site)
+
+                now = time.time()
+                if now - last_site_heartbeat > self._worker_heartbeat_interval:
+                    self._frontier.heartbeat_site(site.id, worker_identity)
+                    last_site_heartbeat = now
+
                 page = self._frontier.claim_page(
-                    site, "%s:%s" % (socket.gethostname(), browser.chrome.port)
+                    site, worker_identity
                 )
 
                 if page.needs_robots_check and not brozzler.is_permitted_by_robots(
@@ -648,13 +665,51 @@ class BrozzlerWorker:
                     page.blocked_by_robots = True
                     self._frontier.completed_page(site, page)
                 else:
-                    outlinks = self.brozzle_page(
-                        browser, site, page, enable_youtube_dl=not self._skip_youtube_dl
-                    )
-                    self._frontier.completed_page(site, page)
-                    self._frontier.scope_and_schedule_outlinks(site, page, outlinks)
-                    if browser.is_running():
-                        site.cookie_db = browser.chrome.persist_and_read_cookie_db()
+                    matched_url_regex = self._match_behavior_regex(page.url)
+                    behavior_disabled = False
+                    if matched_url_regex and site.job_id:
+                        behavior_disabled, _ = self._frontier.is_behavior_disabled(
+                            matched_url_regex, site.job_id
+                        )
+                    behavior_start = time.time()
+                    try:
+                        outlinks = self.brozzle_page(
+                            browser, site, page, enable_youtube_dl=not self._skip_youtube_dl
+                        )
+                        behavior_duration_ms = int((time.time() - behavior_start) * 1000)
+                        if matched_url_regex and site.job_id and not behavior_disabled:
+                            self._frontier.record_behavior_execution(
+                                job_id=site.job_id,
+                                site_id=site.id,
+                                page_url=page.url,
+                                url_regex=matched_url_regex,
+                                duration_ms=behavior_duration_ms,
+                                selectors_matched=len(outlinks),
+                                click_count=0,
+                                success=True,
+                            )
+                        self._frontier.completed_page(site, page)
+                        self._frontier.scope_and_schedule_outlinks(site, page, outlinks)
+                        if browser.is_running():
+                            site.cookie_db = browser.chrome.persist_and_read_cookie_db()
+                    except brozzler.ReachedLimit as e:
+                        self._frontier.reached_limit(site, e, page=page)
+                        raise
+                    except Exception as e:
+                        behavior_duration_ms = int((time.time() - behavior_start) * 1000)
+                        if matched_url_regex and site.job_id and not behavior_disabled:
+                            self._frontier.record_behavior_execution(
+                                job_id=site.job_id,
+                                site_id=site.id,
+                                page_url=page.url,
+                                url_regex=matched_url_regex,
+                                duration_ms=behavior_duration_ms,
+                                selectors_matched=0,
+                                click_count=0,
+                                success=False,
+                                error_message=str(e)[:500],
+                            )
+                        raise
 
                 page = None
         except brozzler.ShutdownRequested:
@@ -662,7 +717,7 @@ class BrozzlerWorker:
         except brozzler.NothingToClaim:
             site_logger.info("no pages left for site")
         except brozzler.ReachedLimit as e:
-            self._frontier.reached_limit(site, e)
+            pass
         except brozzler.ReachedTimeLimit:
             self._frontier.finished(site, "FINISHED_TIME_LIMIT")
         except brozzler.CrawlStopped:
@@ -772,7 +827,7 @@ class BrozzlerWorker:
             (self._browser_pool.num_available() + 1) // 2
         )
         try:
-            sites = self._frontier.claim_sites(len(browsers))
+            sites = self._frontier.claim_sites(len(browsers), worker_id=self._worker_id)
         except:
             self._browser_pool.release_all(browsers)
             raise

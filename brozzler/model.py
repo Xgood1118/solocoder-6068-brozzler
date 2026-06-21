@@ -104,6 +104,10 @@ def new_job(frontier, job_conf):
         job.max_claimed_sites = job_conf["max_claimed_sites"]
     if "pdfs_only" in job_conf:
         job.pdfs_only = job_conf["pdfs_only"]
+    if "priority" in job_conf:
+        job.priority = job_conf["priority"]
+    if "qps_limit" in job_conf:
+        job.qps_limit = job_conf["qps_limit"]
     job.save()
 
     sites = []
@@ -204,6 +208,10 @@ class Job(doublethink.Document, ElapsedMixIn):
             self.status = "ACTIVE"
         if "pdfs_only" not in self:
             self.pdfs_only = False
+        if "priority" not in self:
+            self.priority = "normal"
+        if "qps_limit" not in self:
+            self.qps_limit = None
         if "starts_and_stops" not in self:
             if self.get("started"):  # backward compatibility
                 self.starts_and_stops = [
@@ -259,6 +267,14 @@ class Site(doublethink.Document, ElapsedMixIn):
             self.last_disclaimed = brozzler.EPOCH_UTC
         if "last_claimed" not in self:
             self.last_claimed = brozzler.EPOCH_UTC
+        if "claimed_since" not in self:
+            self.claimed_since = None
+        if "last_claimed_by" not in self:
+            self.last_claimed_by = None
+        if "last_heartbeat" not in self:
+            self.last_heartbeat = None
+        if "per_site_qps" not in self:
+            self.per_site_qps = None
         if "scope" not in self:
             self.scope = {}
         if "video_capture" not in self:
@@ -426,6 +442,14 @@ class Page(doublethink.Document):
             self.brozzle_count = 0
         if "claimed" not in self:
             self.claimed = False
+        if "status" not in self:
+            self.status = "QUEUED"
+        if "warcprox_meta_snapshot" not in self:
+            self.warcprox_meta_snapshot = None
+        if "pending" not in self:
+            self.pending = False
+        if "pending_since" not in self:
+            self.pending_since = None
         if "hops_off_surt" in self and "hops_off" not in self:
             self.hops_off = self.hops_off_surt
         if "hops_off_surt" in self:
@@ -462,3 +486,49 @@ class Page(doublethink.Document):
         if self._canon_hurl is None:
             self._canon_hurl = urlcanon.semantic(self.url)
         return str(self._canon_hurl)
+
+
+class BehaviorExecution(doublethink.Document):
+    logger = structlog.get_logger(logger_name=__module__ + "." + __qualname__)
+    table = "behavior_executions"
+
+    def populate_defaults(self):
+        if "timestamp" not in self:
+            self.timestamp = doublethink.utcnow()
+        if "duration_ms" not in self:
+            self.duration_ms = 0
+        if "selectors_matched" not in self:
+            self.selectors_matched = 0
+        if "click_count" not in self:
+            self.click_count = 0
+        if "success" not in self:
+            self.success = False
+        if "error_message" not in self:
+            self.error_message = None
+        if "url_regex" not in self:
+            self.url_regex = None
+        if "page_url" not in self:
+            self.page_url = None
+        if "site_id" not in self:
+            self.site_id = None
+        if "job_id" not in self:
+            self.job_id = None
+
+
+class DisabledBehavior(doublethink.Document):
+    logger = structlog.get_logger(logger_name=__module__ + "." + __qualname__)
+    table = "disabled_behaviors"
+
+    def populate_defaults(self):
+        if "disabled_at" not in self:
+            self.disabled_at = doublethink.utcnow()
+        if "disabled_until" not in self:
+            self.disabled_until = doublethink.utcnow() + datetime.timedelta(hours=24)
+        if "url_regex" not in self:
+            self.url_regex = None
+        if "reason" not in self:
+            self.reason = None
+        if "job_id" not in self:
+            self.job_id = None
+        if "recent_success_rates" not in self:
+            self.recent_success_rates = []

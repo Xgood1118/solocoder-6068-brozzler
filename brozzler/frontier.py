@@ -16,7 +16,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import copy
 import datetime
+import re
+import time
+from collections import defaultdict
 from typing import Dict, List
 
 import doublethink
@@ -28,6 +32,8 @@ import brozzler
 
 r = rdb.RethinkDB()
 
+PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
+
 
 class UnexpectedDbResult(Exception):
     pass
@@ -36,6 +42,7 @@ class UnexpectedDbResult(Exception):
 def filter_claimable_site_ids(
     active_sites: List[Dict],
     reclaim_cooldown: int,
+    job_priorities: Dict[str, str] = None,
     max_sites_to_claim=1,
 ) -> List[str]:
     job_counts = {}
@@ -45,20 +52,27 @@ def filter_claimable_site_ids(
     for site in active_sites:
         is_claimable = False
 
-        # If site not claimed and not disclaimed within last 20 seconds
         if not site["claimed"] and site.get("last_disclaimed", 0) <= (
             now - datetime.timedelta(seconds=reclaim_cooldown)
         ):
             is_claimable = True
 
-        # or site has been claimed more than an hour ago
-        if "last_claimed" in site and site["last_claimed"] <= (
+        if site["claimed"]:
+            heartbeat_stale = True
+            if "last_heartbeat" in site and site["last_heartbeat"] is not None:
+                heartbeat_stale = site["last_heartbeat"] <= (
+                    now - datetime.timedelta(seconds=reclaim_cooldown * 3)
+                )
+            if heartbeat_stale and "last_claimed" in site and site["last_claimed"] <= (
+                now - datetime.timedelta(seconds=reclaim_cooldown * 3)
+            ):
+                is_claimable = True
+
+        if site["claimed"] and "last_claimed" in site and site["last_claimed"] <= (
             now - datetime.timedelta(hours=1)
         ):
             is_claimable = True
 
-        # Count number of claimed sites per job_id (ignoring sites claimed over an hour ago)
-        # for enforcing the optional max_claimed_sites per job
         if site["claimed"] and "max_claimed_sites" in site and "job_id" in site:
             if not is_claimable:
                 job_id = site["job_id"]
@@ -67,8 +81,14 @@ def filter_claimable_site_ids(
         if is_claimable:
             claimable_sites.append(site)
 
+    if job_priorities:
+        claimable_sites.sort(
+            key=lambda s: PRIORITY_ORDER.get(
+                job_priorities.get(s.get("job_id"), "normal"), 1
+            )
+        )
+
     site_ids_to_claim = []
-    # gather sites that are under the max without going over
     for site in claimable_sites:
         if (
             "max_claimed_sites" in site
@@ -81,7 +101,6 @@ def filter_claimable_site_ids(
         if "max_claimed_sites" not in site or "job_id" not in site:
             site_ids_to_claim.append(site["id"])
 
-        # short circuit if we already have more than requested
         if len(site_ids_to_claim) >= max_sites_to_claim:
             break
 
@@ -128,16 +147,42 @@ class RethinkDbFrontier:
                     r.row["priority"],
                 ],
             ).run()
-            # this index is for displaying pages in a sensible order in the web
-            # console
             self.rr.table("pages").index_create(
                 "least_hops",
                 [r.row["site_id"], r.row["brozzle_count"], r.row["hops_from_seed"]],
+            ).run()
+            self.rr.table("pages").index_create(
+                "pending_by_site",
+                [r.row["site_id"], r.row["pending"], r.row["pending_since"]],
             ).run()
         if "jobs" not in tables:
             db_logger.info("creating rethinkdb table 'jobs' in database")
             self.rr.table_create(
                 "jobs", shards=self.shards, replicas=self.replicas
+            ).run()
+        if "behavior_executions" not in tables:
+            db_logger.info("creating rethinkdb table 'behavior_executions'")
+            self.rr.table_create(
+                "behavior_executions", shards=self.shards, replicas=self.replicas
+            ).run()
+            self.rr.table("behavior_executions").index_create(
+                "by_job_url_regex", [r.row["job_id"], r.row["url_regex"], r.row["timestamp"]]
+            ).run()
+            self.rr.table("behavior_executions").index_create(
+                "by_site", [r.row["site_id"], r.row["timestamp"]]
+            ).run()
+        if "disabled_behaviors" not in tables:
+            db_logger.info("creating rethinkdb table 'disabled_behaviors'")
+            self.rr.table_create(
+                "disabled_behaviors", shards=self.shards, replicas=self.replicas
+            ).run()
+            self.rr.table("disabled_behaviors").index_create(
+                "by_job_regex", [r.row["job_id"], r.row["url_regex"]]
+            ).run()
+        if "qps_stats" not in tables:
+            db_logger.info("creating rethinkdb table 'qps_stats'")
+            self.rr.table_create(
+                "qps_stats", shards=self.shards, replicas=self.replicas
             ).run()
 
     def _vet_result(self, result, **kwargs):
@@ -172,6 +217,7 @@ class RethinkDbFrontier:
                 "last_disclaimed",
                 "claimed",
                 "last_claimed",
+                "last_heartbeat",
                 "job_id",
                 "max_claimed_sites",
             )
@@ -180,28 +226,45 @@ class RethinkDbFrontier:
         )
         return active_sites
 
-    def claim_sites(self, n=1, reclaim_cooldown=20) -> List[Dict]:
+    def _get_job_priorities(self) -> Dict[str, str]:
+        jobs = self.rr.table("jobs").pluck("id", "priority").run()
+        return {j["id"]: j.get("priority", "normal") for j in jobs}
+
+    def claim_sites(self, n=1, reclaim_cooldown=20, worker_id=None) -> List[Dict]:
         self.logger.debug("claiming up to %s sites to brozzle", n)
 
         active_sites = self.get_active_sites()
+        job_priorities = self._get_job_priorities()
         site_ids_to_claim = filter_claimable_site_ids(
-            active_sites, reclaim_cooldown, max_sites_to_claim=n
+            active_sites, reclaim_cooldown, job_priorities=job_priorities, max_sites_to_claim=n
         )
+        update_data = {
+            "claimed": True,
+            "last_claimed": r.now(),
+            "claimed_since": r.now(),
+        }
+        if worker_id:
+            update_data["last_claimed_by"] = worker_id
+            update_data["last_heartbeat"] = r.now()
+
+        stale_threshold = r.now().sub(reclaim_cooldown * 3)
         result = (
             self.rr.table("sites", read_mode="majority")
             .get_all(r.args(site_ids_to_claim))
-            .update(  # mark the sites we're claiming, and return changed sites (our final claim
-                # results)
-                #
-                # try to avoid a race condition resulting in multiple
-                # brozzler-workers claiming the same site
-                # see https://github.com/rethinkdb/rethinkdb/issues/3235#issuecomment-60283038
+            .update(
                 r.branch(
                     r.or_(
                         r.row["claimed"].not_(),
                         r.row["last_claimed"].lt(r.now().sub(60 * 60)),
+                        r.and_(
+                            r.row["claimed"],
+                            r.or_(
+                                r.row.has_fields("last_heartbeat").not_(),
+                                r.row["last_heartbeat"].lt(stale_threshold),
+                            ),
+                        ),
                     ),
-                    {"claimed": True, "last_claimed": r.now()},
+                    update_data,
                     {},
                 ),
                 return_changes=True,
@@ -229,6 +292,18 @@ class RethinkDbFrontier:
         else:
             raise brozzler.NothingToClaim
 
+    def heartbeat_site(self, site_id, worker_id=None):
+        updates = {"last_heartbeat": r.now()}
+        if worker_id:
+            updates["last_claimed_by"] = worker_id
+        result = (
+            self.rr.table("sites")
+            .get(site_id)
+            .update(updates)
+            .run()
+        )
+        return result
+
     def enforce_time_limit(self, site):
         """
         Raises `brozzler.ReachedTimeLimit` if appropriate.
@@ -243,10 +318,6 @@ class RethinkDbFrontier:
             raise brozzler.ReachedTimeLimit
 
     def claim_page(self, site, worker_id):
-        # ignores the "claimed" field of the page, because only one
-        # brozzler-worker can be working on a site at a time, and that would
-        # have to be the worker calling this method, so if something is claimed
-        # already, it must have been left that way because of some error
         result = (
             self.rr.table("pages")
             .between(
@@ -256,13 +327,17 @@ class RethinkDbFrontier:
             )
             .order_by(index=r.desc("priority_by_site"))
             .filter(
-                lambda page: r.or_(
-                    page.has_fields("retry_after").not_(), r.now() > page["retry_after"]
+                lambda page: r.and_(
+                    r.or_(
+                        page.has_fields("retry_after").not_(), r.now() > page["retry_after"]
+                    ),
+                    page.has_fields("pending").not_().or_(page["pending"] == False),
                 )
             )
             .limit(1)
             .update(
-                {"claimed": True, "last_claimed_by": worker_id}, return_changes="always"
+                {"claimed": True, "last_claimed_by": worker_id, "status": "ACTIVE"},
+                return_changes="always",
             )
             .run()
         )
@@ -288,7 +363,8 @@ class RethinkDbFrontier:
     def completed_page(self, site, page):
         page.brozzle_count += 1
         page.claimed = False
-        # XXX set priority?
+        if page.status != "RETRY":
+            page.status = "PASSED"
         page.save()
         if page.redirect_url and page.hops_from_seed == 0:
             site.note_seed_redirect(page.redirect_url)
@@ -346,6 +422,10 @@ class RethinkDbFrontier:
         site.last_disclaimed = doublethink.utcnow()
         site.starts_and_stops[-1]["stop"] = doublethink.utcnow()
         site.save()
+        if status == "FINISHED_STOP_REQUESTED":
+            self.abort_pending_pages(site=site)
+            if site.job_id:
+                self.abort_pending_pages(job_id=site.job_id)
         if site.job_id:
             self._maybe_finish_job(site.job_id)
 
@@ -353,13 +433,17 @@ class RethinkDbFrontier:
         self.logger.info("disclaiming", site=site)
         site.claimed = False
         site.last_disclaimed = doublethink.utcnow()
+        if page:
+            page.claimed = False
+            page.save()
+        job = None
+        if site.job_id:
+            job = brozzler.Job.load(self.rr, site.job_id)
+        self.release_pending_pages(site, job=job)
         if not page and not self.has_outstanding_pages(site):
             self.finished(site, "FINISHED")
         else:
             site.save()
-        if page:
-            page.claimed = False
-            page.save()
 
     def resume_job(self, job):
         job.status = "ACTIVE"
@@ -456,7 +540,7 @@ class RethinkDbFrontier:
 
     def scope_and_schedule_outlinks(self, site, parent_page, outlinks):
         decisions = {"accepted": set(), "blocked": set(), "rejected": set()}
-        counts = {"added": 0, "updated": 0, "rejected": 0, "blocked": 0}
+        counts = {"added": 0, "updated": 0, "rejected": 0, "blocked": 0, "pending": 0}
 
         fresh_pages, blocked, out_of_scope = self._scope_and_enforce_robots(
             site, parent_page, outlinks
@@ -466,12 +550,9 @@ class RethinkDbFrontier:
         counts["blocked"] += len(blocked)
         counts["rejected"] += len(out_of_scope)
 
-        # get existing pages from rethinkdb
         results = self.rr.table("pages").get_all(*fresh_pages.keys()).run()
         pages = {doc["id"]: brozzler.Page(self.rr, doc) for doc in results}
 
-        # build list of pages to save, consisting of new pages, and existing
-        # pages updated with higher priority and new hashtags
         for fresh_page in fresh_pages.values():
             decisions["accepted"].add(fresh_page.url)
             if fresh_page.id in pages:
@@ -482,17 +563,26 @@ class RethinkDbFrontier:
                 pages[fresh_page.id] = fresh_page
                 counts["added"] += 1
 
-        # make sure we're not stepping on our own toes in case we have a link
-        # back to parent_page, which I think happens because of hashtags
         if parent_page.id in pages:
             self._merge_page(parent_page, pages[parent_page.id])
             del pages[parent_page.id]
 
-        # insert/replace in batches of 50 to try to avoid this error:
-        # "rethinkdb.errors.ReqlDriverError: Query size (167883036) greater than maximum (134217727) in:"
-        # there can be many pages and each one can be very large (many videos,
-        # in and out of scope links, etc)
-        pages_list = list(pages.values())
+        job = None
+        if site.job_id:
+            job = brozzler.Job.load(self.rr, site.job_id)
+
+        ready_pages = []
+        pending_pages = []
+        for page in pages.values():
+            ok, _ = self.check_rate_limit(site, job)
+            if ok:
+                ready_pages.append(page)
+                self.record_page_scheduled(site, job)
+            else:
+                pending_pages.append(page)
+                counts["pending"] += 1
+
+        pages_list = ready_pages
         for batch in (pages_list[i : i + 50] for i in range(0, len(pages_list), 50)):
             try:
                 self.logger.debug("inserting/replacing batch of %s pages", len(batch))
@@ -509,6 +599,9 @@ class RethinkDbFrontier:
                     len(batch),
                 )
 
+        if pending_pages:
+            self.add_to_pending(site, pending_pages)
+
         parent_page.outlinks = {}
         for k in decisions:
             parent_page.outlinks[k] = list(decisions[k])
@@ -516,29 +609,47 @@ class RethinkDbFrontier:
 
         self.logger.info(
             "%s new links added, %s existing links updated, %s links "
-            "rejected, %s links blocked by robots from %s",
+            "rejected, %s links blocked by robots, %s links pending from %s",
             counts["added"],
             counts["updated"],
             counts["rejected"],
             counts["blocked"],
+            counts["pending"],
             parent_page,
         )
 
-    def reached_limit(self, site, e):
+    def reached_limit(self, site, e, page=None):
         self.logger.info("reached_limit", site=site, e=e)
         assert isinstance(e, brozzler.ReachedLimit)
-        if (
-            site.reached_limit
-            and site.reached_limit != e.warcprox_meta["reached-limit"]
-        ):
-            self.logger.warning(
-                "reached limit %s but site had already reached limit %s",
-                e.warcprox_meta["reached-limit"],
-                self.reached_limit,
+        if page is not None:
+            if hasattr(e, "warcprox_meta") and e.warcprox_meta:
+                page.warcprox_meta_snapshot = copy.deepcopy(e.warcprox_meta)
+            retry_delay = min(135, 60 * (1.5 ** (page.failed_attempts or 0)))
+            page.retry_after = doublethink.utcnow() + datetime.timedelta(
+                seconds=retry_delay
+            )
+            page.failed_attempts = (page.failed_attempts or 0) + 1
+            page.status = "RETRY"
+            page.claimed = False
+            page.save()
+            self.logger.info(
+                "marked page for retry after warcprox 420",
+                page=page,
+                retry_after=page.retry_after,
             )
         else:
-            site.reached_limit = e.warcprox_meta["reached-limit"]
-            self.finished(site, "FINISHED_REACHED_LIMIT")
+            if (
+                site.reached_limit
+                and site.reached_limit != e.warcprox_meta["reached-limit"]
+            ):
+                self.logger.warning(
+                    "reached limit %s but site had already reached limit %s",
+                    e.warcprox_meta["reached-limit"],
+                    self.reached_limit,
+                )
+            else:
+                site.reached_limit = e.warcprox_meta["reached-limit"]
+                self.finished(site, "FINISHED_REACHED_LIMIT")
 
     def job_sites(self, job_id):
         results = self.rr.table("sites").get_all(job_id, index="job_id").run()
@@ -583,3 +694,289 @@ class RethinkDbFrontier:
         for result in results:
             self.logger.debug("yielding result", result=result)
             yield brozzler.Page(self.rr, result)
+
+    def _update_qps_stats(self, entity_type, entity_id):
+        now = time.time()
+        window_start = now - 1.0
+        result = (
+            self.rr.table("qps_stats")
+            .get_all([entity_type, entity_id])
+            .update(
+                lambda row: {
+                    "timestamps": row["timestamps"].filter(
+                        lambda t: t > window_start
+                    ).append(now),
+                    "last_update": now,
+                },
+                non_atomic=True,
+            )
+            .run()
+        )
+        if result.get("skipped", 0) > 0 or result.get("replaced", 0) == 0:
+            self.rr.table("qps_stats").insert(
+                {
+                    "id": [entity_type, entity_id],
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "timestamps": [now],
+                    "last_update": now,
+                }
+            ).run()
+
+    def _get_current_qps(self, entity_type, entity_id):
+        now = time.time()
+        window_start = now - 1.0
+        result = (
+            self.rr.table("qps_stats").get([entity_type, entity_id]).run()
+        )
+        if not result:
+            return 0
+        timestamps = [t for t in result.get("timestamps", []) if t > window_start]
+        return len(timestamps)
+
+    def check_rate_limit(self, site, job=None):
+        per_site_qps = site.get("per_site_qps")
+        if per_site_qps:
+            current_site_qps = self._get_current_qps("site", site.id)
+            if current_site_qps >= per_site_qps:
+                return False, "site_qps"
+        if job and job.get("qps_limit"):
+            current_job_qps = self._get_current_qps("job", job.id)
+            if current_job_qps >= job.qps_limit:
+                return False, "job_qps"
+        return True, None
+
+    def record_page_scheduled(self, site, job=None):
+        self._update_qps_stats("site", site.id)
+        if job and job.id:
+            self._update_qps_stats("job", job.id)
+
+    def add_to_pending(self, site, pages):
+        if not pages:
+            return
+        now = doublethink.utcnow()
+        for page in pages:
+            page.pending = True
+            page.pending_since = now
+            page.status = "PENDING"
+        pages_list = list(pages) if isinstance(pages, (list, tuple)) else [pages]
+        for batch in (pages_list[i : i + 50] for i in range(0, len(pages_list), 50)):
+            self.rr.table("pages").insert(batch, conflict="replace").run()
+        self.logger.info(
+            "added %s pages to pending queue for site %s", len(pages_list), site.id
+        )
+
+    def release_pending_pages(self, site, job=None, max_release=None):
+        result = (
+            self.rr.table("pages")
+            .between([site.id, True, r.minval], [site.id, True, r.maxval], index="pending_by_site")
+            .order_by(index="pending_by_site")
+            .limit(max_release or 100)
+            .run()
+        )
+        pending_pages = list(result)
+        released = []
+        for page_doc in pending_pages:
+            page = brozzler.Page(self.rr, page_doc)
+            ok, _ = self.check_rate_limit(site, job)
+            if not ok:
+                break
+            page.pending = False
+            page.pending_since = None
+            page.status = "QUEUED"
+            page.save()
+            self.record_page_scheduled(site, job)
+            released.append(page)
+        if released:
+            self.logger.info(
+                "released %s pending pages for site %s", len(released), site.id
+            )
+        return released
+
+    def abort_pending_pages(self, site=None, job_id=None):
+        updates = {"pending": False, "status": "ABORTED"}
+        if site:
+            result = (
+                self.rr.table("pages")
+                .between([site.id, True, r.minval], [site.id, True, r.maxval], index="pending_by_site")
+                .update(updates)
+                .run()
+            )
+            self.logger.info(
+                "aborted %s pending pages for site %s",
+                result.get("replaced", 0),
+                site.id,
+            )
+        elif job_id:
+            site_ids = list(
+                self.rr.table("sites").get_all(job_id, index="job_id")["id"].run()
+            )
+            for site_id in site_ids:
+                result = (
+                    self.rr.table("pages")
+                    .between([site_id, True, r.minval], [site_id, True, r.maxval], index="pending_by_site")
+                    .update(updates)
+                    .run()
+                )
+                self.logger.info(
+                    "aborted %s pending pages for site %s",
+                    result.get("replaced", 0),
+                    site_id,
+                )
+
+    def is_behavior_disabled(self, url_regex, job_id=None):
+        now = doublethink.utcnow()
+        query = self.rr.table("disabled_behaviors")
+        if job_id:
+            query = query.get_all([job_id, url_regex], index="by_job_regex")
+        else:
+            query = query.filter({"url_regex": url_regex})
+        results = list(query.run())
+        for r_doc in results:
+            if r_doc.get("disabled_until", now) > now:
+                return True, r_doc
+        return False, None
+
+    def record_behavior_execution(
+        self,
+        job_id,
+        site_id,
+        page_url,
+        url_regex,
+        duration_ms,
+        selectors_matched=0,
+        click_count=0,
+        success=False,
+        error_message=None,
+    ):
+        execution = brozzler.model.BehaviorExecution(
+            self.rr,
+            {
+                "job_id": job_id,
+                "site_id": site_id,
+                "page_url": page_url,
+                "url_regex": url_regex,
+                "duration_ms": duration_ms,
+                "selectors_matched": selectors_matched,
+                "click_count": click_count,
+                "success": success,
+                "error_message": error_message,
+            },
+        )
+        execution.save()
+        self._check_and_disable_behavior_if_needed(job_id, url_regex)
+        return execution
+
+    def _check_and_disable_behavior_if_needed(self, job_id, url_regex):
+        now = doublethink.utcnow()
+        results = list(
+            self.rr.table("behavior_executions")
+            .between(
+                [job_id, url_regex, r.minval],
+                [job_id, url_regex, r.maxval],
+                index="by_job_url_regex",
+            )
+            .order_by(index=r.desc("by_job_url_regex"))
+            .limit(5)
+            .run()
+        )
+        if len(results) < 5:
+            return
+        success_rates = []
+        recent_rates = []
+        window_results = results
+        for i in range(len(window_results)):
+            window = window_results[i:]
+            if len(window) < 5:
+                continue
+            successes = sum(1 for r in window if r.get("success"))
+            rate = successes / len(window)
+            success_rates.append(rate)
+            recent_rates.append(rate)
+        if len(recent_rates) >= 1 and all(rate < 0.5 for rate in recent_rates[-1:]):
+            last_5 = window_results[:5]
+            rate = sum(1 for r in last_5 if r.get("success")) / 5
+            if rate < 0.5:
+                disabled, _ = self.is_behavior_disabled(url_regex, job_id)
+                if not disabled:
+                    disabled_behavior = brozzler.model.DisabledBehavior(
+                        self.rr,
+                        {
+                            "job_id": job_id,
+                            "url_regex": url_regex,
+                            "disabled_at": now,
+                            "disabled_until": now + datetime.timedelta(hours=24),
+                            "reason": "success rate %.2f below 50%% for 5 consecutive runs" % rate,
+                            "recent_success_rates": recent_rates,
+                        },
+                    )
+                    disabled_behavior.save()
+                    self.logger.warning(
+                        "disabled behavior %s for job %s due to low success rate",
+                        url_regex,
+                        job_id,
+                    )
+
+    def get_behavior_success_rates(self, job_id, top_n=10):
+        pipeline = (
+            self.rr.table("behavior_executions")
+            .between(
+                [job_id, r.minval, r.minval],
+                [job_id, r.maxval, r.maxval],
+                index="by_job_url_regex",
+            )
+            .group("url_regex")
+            .ungroup()
+            .map(
+                lambda g: {
+                    "url_regex": g["group"],
+                    "total": g["reduction"].count(),
+                    "successes": g["reduction"].filter(lambda r: r["success"]).count(),
+                }
+            )
+            .run()
+        )
+        results = []
+        for row in pipeline:
+            total = row["total"]
+            successes = row["successes"]
+            rate = successes / total if total > 0 else 0.0
+            results.append(
+                {
+                    "url_regex": row["url_regex"],
+                    "total": total,
+                    "successes": successes,
+                    "success_rate": rate,
+                }
+            )
+        results.sort(key=lambda x: x["success_rate"])
+        return results[:top_n]
+
+    def get_disabled_behaviors(self, job_id=None):
+        query = self.rr.table("disabled_behaviors")
+        if job_id:
+            query = query.filter({"job_id": job_id})
+        now = doublethink.utcnow()
+        results = list(query.run())
+        return [r for r in results if r.get("disabled_until", now) > now]
+
+    def replay_behavior(self, job_id, url_regex, test_site_id=None):
+        job = brozzler.Job.load(self.rr, job_id)
+        if not job:
+            raise ValueError("job not found: %s" % job_id)
+        target_behavior = None
+        for behavior in brozzler.behaviors():
+            if behavior.get("url_regex") == url_regex:
+                target_behavior = behavior
+                break
+        if not target_behavior:
+            raise ValueError("behavior not found for regex: %s" % url_regex)
+        self.logger.info(
+            "replaying behavior", url_regex=url_regex, job_id=job_id
+        )
+        return {
+            "behavior": target_behavior,
+            "job_id": job_id,
+            "url_regex": url_regex,
+            "test_frontier": True,
+        }

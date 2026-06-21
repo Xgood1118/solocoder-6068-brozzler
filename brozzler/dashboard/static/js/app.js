@@ -169,6 +169,10 @@ brozzlerControllers.controller("JobController", ["$scope", "$routeParams", "$htt
         $http.get("/api/jobs/" + $routeParams.id + "/yaml").success(function(data) {
             $scope.job_yaml = data;
         });
+        $http.get("/api/jobs/" + $routeParams.id + "/behavior_stats").success(function(data) {
+            $scope.behaviorStats = data.behavior_stats;
+            $scope.disabledBehaviors = data.disabled_behaviors;
+        });
     }]);
 
 brozzlerControllers.controller("SiteController", ["$scope", "$routeParams", "$http", "$window",
@@ -206,6 +210,9 @@ brozzlerControllers.controller("SiteController", ["$scope", "$routeParams", "$ht
         });
         $http.get("/api/site/" + $routeParams.id + "/yaml").success(function(data) {
             $scope.site_yaml = data;
+        });
+        $http.get("/api/site/" + $routeParams.id + "/pending_count").success(function(data) {
+            $scope.pendingCount = data.count;
         });
 
         loadMorePages();

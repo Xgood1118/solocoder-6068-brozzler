@@ -16,6 +16,10 @@ id:
     type: dict
     nullable: true
 
+  per_site_qps:
+    type: number
+    min: 0
+
   scope:
     type: dict
     schema:
@@ -105,3 +109,18 @@ max_claimed_sites:
 
 pdfs_only:
   type: boolean
+
+priority:
+  type: string
+  allowed:
+    - high
+    - normal
+    - low
+
+qps_limit:
+  type: number
+  min: 0
+
+per_site_qps:
+  type: number
+  min: 0

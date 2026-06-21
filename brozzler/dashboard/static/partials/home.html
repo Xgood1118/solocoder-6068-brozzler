@@ -47,6 +47,7 @@
                 <thead>
                     <tr>
                         <th>id</th>
+                        <th>priority</th>
                         <th>status</th>
                         <th>started</th>
                         <th>finished</th>
@@ -56,6 +57,12 @@
                 <tbody>
                 <tr ng-repeat="job in jobs">
                     <td><a href="/jobs/{{job.id}}">{{job.id}}</a></td>
+                    <td>
+                        <span class="label"
+                            ng-class="{'label-danger': job.priority==='high', 'label-info': job.priority==='normal', 'label-default': job.priority==='low'}">
+                            {{job.priority || 'normal'}}
+                        </span>
+                    </td>
                     <td>{{job.status}}</td>
                     <td>{{job.started}}</td>
                     <td>{{job.finished}}</td>

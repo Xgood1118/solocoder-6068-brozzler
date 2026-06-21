@@ -41,6 +41,47 @@
     </div>
 
     <div class="row">
+        <div class="col-sm-12" ng-show="disabledBehaviors && disabledBehaviors.length > 0">
+            <div class="alert alert-danger">
+                <h4><span class="fa fa-exclamation-triangle"></span> Disabled Behaviors</h4>
+                <ul>
+                    <li ng-repeat="db in disabledBehaviors">
+                        <strong>{{db.url_regex}}</strong> - disabled until {{db.disabled_until}}
+                        <div><small>{{db.reason}}</small></div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="row" ng-show="behaviorStats">
+        <div class="col-sm-12">
+            <h3>Behavior Success Rates (Top 10 Lowest)</h3>
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>URL Regex</th>
+                        <th>Total Executions</th>
+                        <th>Success Rate</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr ng-repeat="bs in behaviorStats">
+                        <td><code>{{bs.url_regex}}</code></td>
+                        <td>{{bs.total_count}}</td>
+                        <td>
+                            <span class="label"
+                                ng-class="{'label-danger': bs.success_rate < 0.5, 'label-warning': bs.success_rate < 0.8, 'label-success': bs.success_rate >= 0.8}">
+                                {{(bs.success_rate * 100).toFixed(1)}}%
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="row">
         <div class="col-sm-12">
             <h3>Sites</h3>
             <div class="col-sm-6 col-md-4" ng-repeat="site in sites">
@@ -60,6 +101,11 @@
                             <li><span class="fa fa-li fa-clone"></span> <strong>{{site.stats.total.urls}}</strong> urls crawled</li>
                             <li><span class="fa fa-li fa-archive"></span> <strong>{{site.stats.total.wire_bytes | byteformat}}</strong> crawled</li>
                             <li><span class="fa fa-li fa-ellipsis-h"></span> <strong>{{site.queued_count}}</strong> pages queued</li>
+                            <li ng-if="site.claimed_since">
+                                <span class="fa fa-li fa-user"></span>
+                                <small>by {{site.last_claimed_by || 'unknown'}}
+                                <span ng-if="site.last_heartbeat">· hb {{site.last_heartbeat}}</span></small>
+                            </li>
                         </ul>
                     </div>
                 </a>

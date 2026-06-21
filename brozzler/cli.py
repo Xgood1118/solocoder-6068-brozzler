@@ -825,7 +825,11 @@ def brozzler_list_jobs(argv=None):
             logger.error("no such job with id", job_id=job_id)
             sys.exit(1)
     else:
-        reql = rr.table("jobs").order_by("id")
+        priority_weight = r.branch(
+            r.row["priority"].eq("high"), 0,
+            r.branch(r.row["priority"].eq("normal"), 1, 2)
+        )
+        reql = rr.table("jobs").order_by(priority_weight, "id")
         if args.active:
             reql = reql.filter({"status": "ACTIVE"})
         logger.debug("querying rethinkdb", query=reql)
@@ -1292,3 +1296,69 @@ def brozzler_stop_crawl(argv=None):
             sys.exit(1)
         site.stop_requested = doublethink.utcnow()
         site.save()
+
+
+def brozzler_replay_behavior(argv=None):
+    """
+    Replay a behavior for a job and URL regex, write outlinks to test frontier
+    without affecting the main crawl queue.
+    """
+    argv = argv or sys.argv
+    arg_parser = argparse.ArgumentParser(
+        prog=os.path.basename(argv[0]),
+        formatter_class=BetterArgumentDefaultsHelpFormatter,
+        description="Replay a behavior for debugging - writes outlinks to test frontier",
+    )
+    arg_parser.add_argument("job_id", metavar="JOB_ID", help="job id")
+    arg_parser.add_argument(
+        "url_regex", metavar="URL_REGEX", help="url regex of behavior to replay"
+    )
+    arg_parser.add_argument(
+        "--site",
+        dest="test_site_id",
+        metavar="SITE_ID",
+        default=None,
+        help="test site id to write outlinks to (default: creates a new test site)",
+    )
+    arg_parser.add_argument(
+        "--sample-url",
+        dest="sample_url",
+        metavar="URL",
+        default=None,
+        help="sample URL to use for behavior matching (default: uses a URL matching the regex)",
+    )
+    add_rethinkdb_options(arg_parser)
+    add_common_options(arg_parser, argv)
+
+    args = arg_parser.parse_args(args=argv[1:])
+    configure_logging(args)
+
+    rr = rethinker(args)
+    try:
+        job_id = int(args.job_id)
+    except ValueError:
+        job_id = args.job_id
+
+    job = brozzler.Job.load(rr, job_id)
+    if not job:
+        logger.fatal("job not found with", id=job_id)
+        sys.exit(1)
+
+    frontier = brozzler.RethinkDbFrontier(rr)
+    try:
+        test_site_id = int(args.test_site_id) if args.test_site_id else None
+    except ValueError:
+        test_site_id = args.test_site_id
+
+    result = frontier.replay_behavior(
+        job_id=job_id,
+        url_regex=args.url_regex,
+        test_site_id=test_site_id,
+    )
+
+    print(yaml.dump(result, default_flow_style=False))
+    logger.info(
+        "replay complete",
+        outlinks_count=len(result.get("outlinks", [])),
+        test_site_id=result.get("test_site_id"),
+    )

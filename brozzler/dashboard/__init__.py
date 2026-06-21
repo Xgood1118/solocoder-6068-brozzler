@@ -258,10 +258,56 @@ def services():
 
 @app.route("/api/jobs")
 def jobs():
-    reql = rr.table("jobs").order_by(r.desc("id"))
+    priority_weight = r.branch(
+        r.row["priority"].eq("high"), 0,
+        r.branch(r.row["priority"].eq("normal"), 1, 2)
+    )
+    reql = rr.table("jobs").order_by(priority_weight, r.desc("id"))
     logger.debug("querying rethinkdb", query=reql)
     jobs_ = list(reql.run())
     return flask.jsonify(jobs=jobs_)
+
+
+@app.route("/api/sites/<site_id>/pending_count")
+@app.route("/api/site/<site_id>/pending_count")
+def pending_count(site_id):
+    reql = (
+        rr.table("pages")
+        .between(
+            [site_id, True, r.minval],
+            [site_id, True, r.maxval],
+            index="pending_by_site",
+        )
+        .count()
+    )
+    logger.debug("querying rethinkdb", query=reql)
+    count = reql.run()
+    return flask.jsonify(count=count)
+
+
+@app.route("/api/jobs/<job_id>/behavior_stats")
+@app.route("/api/job/<job_id>/behavior_stats")
+def job_behavior_stats(job_id):
+    try:
+        jid = int(job_id)
+    except ValueError:
+        jid = job_id
+    frontier = brozzler.RethinkDbFrontier(rr)
+    stats = frontier.get_behavior_success_rates(jid)
+    disabled = frontier.get_disabled_behaviors(jid)
+    return flask.jsonify(behavior_stats=stats, disabled_behaviors=disabled)
+
+
+@app.route("/api/jobs/<job_id>/disabled_behaviors")
+@app.route("/api/job/<job_id>/disabled_behaviors")
+def job_disabled_behaviors(job_id):
+    try:
+        jid = int(job_id)
+    except ValueError:
+        jid = job_id
+    frontier = brozzler.RethinkDbFrontier(rr)
+    disabled = frontier.get_disabled_behaviors(jid)
+    return flask.jsonify(disabled_behaviors=disabled)
 
 
 @app.route("/api/config")
