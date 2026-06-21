@@ -20,6 +20,7 @@ import copy
 import datetime
 import re
 import time
+import uuid
 from collections import defaultdict
 from typing import Dict, List
 
@@ -944,7 +945,7 @@ class RethinkDbFrontier:
             results.append(
                 {
                     "url_regex": row["url_regex"],
-                    "total": total,
+                    "total_count": total,
                     "successes": successes,
                     "success_rate": rate,
                 }
@@ -960,7 +961,23 @@ class RethinkDbFrontier:
         results = list(query.run())
         return [r for r in results if r.get("disabled_until", now) > now]
 
-    def replay_behavior(self, job_id, url_regex, test_site_id=None):
+    def replay_behavior(
+        self, job_id, url_regex, test_site_id=None, sample_url=None, outlinks=None
+    ):
+        """
+        Record the result of a behavior replay into the test frontier.
+        The actual browser execution happens in the CLI layer (brozzler_replay_behavior).
+
+        Args:
+            job_id: target job id
+            url_regex: the behavior regex that was matched
+            test_site_id: optional existing test site id to write outlinks to
+            sample_url: the URL that was browsed
+            outlinks: iterable of outlink URLs collected during the replay
+
+        Returns:
+            dict with behavior info, test_site_id, outlinks count
+        """
         job = brozzler.Job.load(self.rr, job_id)
         if not job:
             raise ValueError("job not found: %s" % job_id)
@@ -971,12 +988,63 @@ class RethinkDbFrontier:
                 break
         if not target_behavior:
             raise ValueError("behavior not found for regex: %s" % url_regex)
+
+        if test_site_id:
+            test_site = brozzler.Site.load(self.rr, test_site_id)
+            if not test_site:
+                raise ValueError("test site not found: %s" % test_site_id)
+        else:
+            test_site = brozzler.Site(
+                self.rr,
+                {
+                    "seed": sample_url
+                    or ("test-replay://%s" % url_regex.replace("\\", "")),
+                    "job_id": job_id,
+                    "test_replay": True,
+                    "replayed_url_regex": url_regex,
+                },
+            )
+            test_site.id = str(uuid.uuid4())
+            brozzler.new_site(self, test_site)
+            test_site_id = test_site.id
+
+        outlinks_list = list(outlinks or [])
+        if outlinks_list and sample_url:
+            fake_page = brozzler.Page(
+                self.rr,
+                {
+                    "id": "replay-%s-%s"
+                    % (
+                        url_regex.replace("\\", "").replace("/", "_")[:50],
+                        doublethink.utcnow().strftime("%Y%m%d%H%M%S"),
+                    ),
+                    "site_id": test_site_id,
+                    "url": sample_url,
+                    "hops_from_seed": 0,
+                    "brozzle_count": 0,
+                },
+            )
+            try:
+                self.scope_and_schedule_outlinks(test_site, fake_page, outlinks_list)
+            except Exception:
+                self.logger.exception(
+                    "failed to scope/schedule replay outlinks",
+                    test_site_id=test_site_id,
+                )
+
         self.logger.info(
-            "replaying behavior", url_regex=url_regex, job_id=job_id
+            "replay behavior recorded",
+            url_regex=url_regex,
+            job_id=job_id,
+            test_site_id=test_site_id,
+            outlinks_count=len(outlinks_list),
         )
         return {
             "behavior": target_behavior,
             "job_id": job_id,
             "url_regex": url_regex,
-            "test_frontier": True,
+            "sample_url": sample_url,
+            "test_site_id": test_site_id,
+            "outlinks": outlinks_list,
+            "outlinks_count": len(outlinks_list),
         }

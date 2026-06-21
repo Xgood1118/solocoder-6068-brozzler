@@ -1300,14 +1300,18 @@ def brozzler_stop_crawl(argv=None):
 
 def brozzler_replay_behavior(argv=None):
     """
-    Replay a behavior for a job and URL regex, write outlinks to test frontier
-    without affecting the main crawl queue.
+    Replay a behavior for a job and URL regex. Starts a real browser, runs the
+    matched behavior on a sample URL, collects outlinks, and writes them to a
+    test frontier site without affecting the main crawl queue.
     """
     argv = argv or sys.argv
     arg_parser = argparse.ArgumentParser(
         prog=os.path.basename(argv[0]),
         formatter_class=BetterArgumentDefaultsHelpFormatter,
-        description="Replay a behavior for debugging - writes outlinks to test frontier",
+        description=(
+            "Replay a behavior for debugging - starts Chrome, runs the matched "
+            "behavior on a sample URL, and writes outlinks to a test frontier site"
+        ),
     )
     arg_parser.add_argument("job_id", metavar="JOB_ID", help="job id")
     arg_parser.add_argument(
@@ -1325,13 +1329,51 @@ def brozzler_replay_behavior(argv=None):
         dest="sample_url",
         metavar="URL",
         default=None,
-        help="sample URL to use for behavior matching (default: uses a URL matching the regex)",
+        help="sample URL to use for behavior matching (default: looks one up in the job pages)",
+    )
+    arg_parser.add_argument(
+        "-e",
+        "--chrome-exe",
+        dest="chrome_exe",
+        default=suggest_default_chrome_exe(),
+        help="executable to use to invoke chrome",
+    )
+    arg_parser.add_argument(
+        "--no-headless",
+        dest="headless",
+        action="store_false",
+        help="Do not run Chrome headlessly",
+    )
+    arg_parser.add_argument(
+        "--proxy", dest="proxy", default=None, help="http proxy"
+    )
+    arg_parser.add_argument(
+        "--browser_throughput",
+        type=int,
+        dest="download_throughput",
+        default=-1,
+        help="Chrome DevTools downloadThroughput for Network.emulateNetworkConditions",
+    )
+    arg_parser.add_argument(
+        "--browser_window_height",
+        type=int,
+        dest="window_height",
+        default=900,
+        help="browser window height in pixels",
+    )
+    arg_parser.add_argument(
+        "--browser_window_width",
+        type=int,
+        dest="window_width",
+        default=1400,
+        help="browser window width in pixels",
     )
     add_rethinkdb_options(arg_parser)
     add_common_options(arg_parser, argv)
 
     args = arg_parser.parse_args(args=argv[1:])
     configure_logging(args)
+    brozzler.chrome.check_version(args.chrome_exe)
 
     rr = rethinker(args)
     try:
@@ -1344,21 +1386,143 @@ def brozzler_replay_behavior(argv=None):
         logger.fatal("job not found with", id=job_id)
         sys.exit(1)
 
+    # Validate behavior exists
+    target_behavior = None
+    for behavior in brozzler.behaviors():
+        if behavior.get("url_regex") == args.url_regex:
+            target_behavior = behavior
+            break
+    if not target_behavior:
+        logger.fatal("no behavior found for regex", url_regex=args.url_regex)
+        sys.exit(1)
+
+    # Resolve sample URL
+    sample_url = args.sample_url
+    if not sample_url:
+        # Try to find a URL from pages table matching the regex
+        try:
+            import re as _re
+
+            compiled = _re.compile(args.url_regex)
+            available_indexes = rr.table("pages").index_list().run()
+            if "job_id" in available_indexes:
+                sample_cursor = (
+                    rr.table("pages")
+                    .get_all(job_id, index="job_id")
+                    .limit(200)
+                    .run()
+                )
+            else:
+                sample_cursor = (
+                    rr.table("pages").filter({"job_id": job_id}).limit(200).run()
+                )
+            for p in sample_cursor:
+                if compiled.search(p.get("url", "")):
+                    sample_url = p["url"]
+                    break
+        except Exception:
+            logger.debug("failed to auto-locate sample url", exc_info=True)
+
+    if not sample_url:
+        logger.fatal(
+            "could not determine a sample URL matching the regex; "
+            "please pass --sample-url URL",
+            url_regex=args.url_regex,
+        )
+        sys.exit(1)
+
+    logger.info("replaying behavior", url_regex=args.url_regex, sample_url=sample_url)
+
+    # Build site + page objects mimicking a real crawl
+    behavior_parameters = job.conf.get("behavior_parameters", {}) or {}
+    site = brozzler.Site(
+        rr,
+        {
+            "id": args.test_site_id or -1,
+            "seed": sample_url,
+            "job_id": job_id,
+            "behavior_parameters": behavior_parameters,
+            "username": job.conf.get("username"),
+            "password": job.conf.get("password"),
+            "user_agent": job.conf.get("user_agent"),
+        },
+    )
+    page = brozzler.Page(rr, {"url": sample_url, "site_id": site.id, "job_id": job_id})
+
+    worker = brozzler.BrozzlerWorker(
+        frontier=None,
+        proxy=args.proxy,
+        headless=args.headless,
+        skip_extract_outlinks=False,
+        skip_visit_hashtags=True,
+        skip_youtube_dl=True,
+        simpler404=True,
+        screenshot_full_page=False,
+        download_throughput=args.download_throughput,
+        window_height=args.window_height,
+        window_width=args.window_width,
+        worker_id=args.worker_id or ("replay-%s" % os.getpid()),
+    )
+
+    outlinks = []
+    browser = brozzler.Browser(chrome_exe=args.chrome_exe)
+    try:
+        browser.start(
+            proxy=args.proxy,
+            window_height=args.window_height,
+            window_width=args.window_width,
+            headless=args.headless,
+        )
+        collected = worker.brozzle_page(
+            browser,
+            site,
+            page,
+            enable_youtube_dl=False,
+        )
+        outlinks = sorted(collected or [])
+        logger.info("behavior replay produced outlinks", count=len(outlinks))
+    except brozzler.ReachedLimit:
+        logger.exception("reached limit during behavior replay")
+    except brozzler.PageInterstitialShown:
+        logger.exception("page interstitial shown during behavior replay")
+    except brozzler.PageConnectionError:
+        logger.exception("connection error during behavior replay")
+    finally:
+        try:
+            browser.stop()
+        except Exception:
+            pass
+
+    # Record outlinks to test frontier
     frontier = brozzler.RethinkDbFrontier(rr)
     try:
-        test_site_id = int(args.test_site_id) if args.test_site_id else None
-    except ValueError:
-        test_site_id = args.test_site_id
-
-    result = frontier.replay_behavior(
-        job_id=job_id,
-        url_regex=args.url_regex,
-        test_site_id=test_site_id,
-    )
+        test_site_id_parsed = None
+        if args.test_site_id:
+            try:
+                test_site_id_parsed = int(args.test_site_id)
+            except ValueError:
+                test_site_id_parsed = args.test_site_id
+        result = frontier.replay_behavior(
+            job_id=job_id,
+            url_regex=args.url_regex,
+            test_site_id=test_site_id_parsed,
+            sample_url=sample_url,
+            outlinks=outlinks,
+        )
+    except Exception:
+        logger.exception("failed to record replay result to frontier")
+        result = {
+            "job_id": job_id,
+            "url_regex": args.url_regex,
+            "sample_url": sample_url,
+            "outlinks": outlinks,
+            "outlinks_count": len(outlinks),
+            "frontier_error": True,
+        }
 
     print(yaml.dump(result, default_flow_style=False))
     logger.info(
         "replay complete",
-        outlinks_count=len(result.get("outlinks", [])),
+        outlinks_count=len(outlinks),
         test_site_id=result.get("test_site_id"),
     )
